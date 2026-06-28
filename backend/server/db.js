@@ -22,10 +22,38 @@ rawPool.query = (text, params) => {
     text = text.replace(/\?/g, () => `$${++i}`);
     params = params.map(p => typeof p === 'boolean' ? (p ? 1 : 0) : p);
   }
-  return origQuery(text, params).then(result => [result.rows]);
+  return origQuery(text, params).then(result => [result.rows.map(r => normalizeRow(r))]);
 };
 
 export const pool = rawPool;
+
+const ROW_KEY_MAP = {
+  titleen: 'titleEn', titlear: 'titleAr', titletr: 'titleTr',
+  descriptionen: 'descriptionEn', descriptionar: 'descriptionAr', descriptiontr: 'descriptionTr',
+  priceegp: 'priceEGP', pricetry: 'priceTRY',
+  videourl: 'videoUrl', sortorder: 'sortOrder',
+  gardenid: 'gardenId', seedid: 'seedId',
+  createdat: 'createdAt', updatedat: 'updatedAt',
+  passwordhash: 'passwordHash', isverified: 'isVerified',
+  verificationcode: 'verificationCode',
+  paidgardens: 'paidGardens',
+  isread: 'isRead', isused: 'isUsed',
+  isgrowthreport: 'isGrowthReport', iswelcome: 'isWelcome',
+  studentname: 'studentName', studentemail: 'studentEmail',
+  questionid: 'questionId', correctindex: 'correctIndex',
+  optionsen: 'optionsEn', optionsar: 'optionsAr', optionstr: 'optionsTr',
+};
+function normalizeRow(r) {
+  if (!r || typeof r !== 'object') return r;
+  const n = { ...r };
+  for (const [oldKey, newKey] of Object.entries(ROW_KEY_MAP)) {
+    if (oldKey in n) {
+      n[newKey] = n[oldKey];
+      if (oldKey !== newKey) delete n[oldKey];
+    }
+  }
+  return n;
+}
 
 let memoryDb = null;
 
@@ -73,31 +101,31 @@ async function loadAll() {
     pool.query('SELECT * FROM quiz_answers'),
   ]);
 
-  db.users = users.map(u => parseRow(u, ['paidGardens']));
-  db.emails = emails.map(e => parseRow(e, ['isRead', 'isGrowthReport', 'isWelcome']));
-  db.gardens = gardens;
-  db.seeds = seedRows.map(s => ({ ...s, tags: s.tags ? s.tags.split(',') : [] }));
-  db.payments = payments;
-  db.student_growth = growth;
+  db.users = users.map(u => parseRow(normalizeRow(u), ['paidGardens']));
+  db.emails = emails.map(e => parseRow(normalizeRow(e), ['isRead', 'isGrowthReport', 'isWelcome']));
+  db.gardens = gardens.map(normalizeRow);
+  db.seeds = seedRows.map(s => normalizeRow({ ...s, tags: s.tags ? s.tags.split(',') : [] }));
+  db.payments = payments.map(normalizeRow);
+  db.student_growth = growth.map(normalizeRow);
 
   const replyMap = new Map();
-  for (const r of replies) {
+  for (const r of replies.map(normalizeRow)) {
     if (!replyMap.has(r.queryId)) replyMap.set(r.queryId, []);
     replyMap.get(r.queryId).push({ author: r.author, text: r.text, timestamp: r.timestamp });
   }
-  db.queries = qRows.map(q => ({
+  db.queries = qRows.map(q => normalizeRow({
     ...q,
     replies: replyMap.get(q.id) || [],
   }));
 
-  db.otp_verifications = otp.map(o => parseRow(o, ['isUsed']));
-  db.quiz_questions = qq.map(q => ({
+  db.otp_verifications = otp.map(o => parseRow(normalizeRow(o), ['isUsed']));
+  db.quiz_questions = qq.map(q => normalizeRow({
     ...q,
     optionsEn: pluck(q.optionsEn),
     optionsAr: pluck(q.optionsAr),
     optionsTr: pluck(q.optionsTr),
   }));
-  db.quiz_answers = qa;
+  db.quiz_answers = qa.map(normalizeRow);
 
   console.log(`[DB] Cache loaded in ${Date.now() - start}ms: ${db.users.length} users, ${db.gardens.length} gardens, ${db.seeds.length} seeds`);
   return db;

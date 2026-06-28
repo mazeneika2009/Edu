@@ -12,8 +12,6 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-let transporter = null;
-
 export async function sendOTPEmail(to, otp, subject, bodyText) {
   const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
@@ -29,15 +27,16 @@ export async function sendOTPEmail(to, otp, subject, bodyText) {
   }
 
   try {
-    if (!transporter) {
-      transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: { user, pass },
-        tls: { rejectUnauthorized: false }
-      });
-    }
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000
+    });
 
     const info = await transporter.sendMail({
       from,
@@ -92,7 +91,10 @@ async function sendEmail(to, subject, textHtml, textPlain) {
     const t = nodemailer.createTransport({
       host, port, secure: port === 465,
       auth: { user, pass },
-      tls: { rejectUnauthorized: false }
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000
     });
     const info = await t.sendMail({
       from, to, subject,
@@ -106,6 +108,34 @@ async function sendEmail(to, subject, textHtml, textPlain) {
     console.log('[SMTP] Payment notification is still available in the mock inbox.');
     return { success: false, reason: 'nodemailer_error', message: error.message };
   }
+}
+
+const ROW_KEY_MAP = {
+  titleen: 'titleEn', titlear: 'titleAr', titletr: 'titleTr',
+  descriptionen: 'descriptionEn', descriptionar: 'descriptionAr', descriptiontr: 'descriptionTr',
+  priceegp: 'priceEGP', pricetry: 'priceTRY',
+  videourl: 'videoUrl', sortorder: 'sortOrder',
+  gardenid: 'gardenId', seedid: 'seedId',
+  createdat: 'createdAt', updatedat: 'updatedAt',
+  passwordhash: 'passwordHash', isverified: 'isVerified',
+  verificationcode: 'verificationCode',
+  paidgardens: 'paidGardens',
+  isread: 'isRead', isused: 'isUsed',
+  isgrowthreport: 'isGrowthReport', iswelcome: 'isWelcome',
+  studentname: 'studentName', studentemail: 'studentEmail',
+  questionid: 'questionId', correctindex: 'correctIndex',
+  optionsen: 'optionsEn', optionsar: 'optionsAr', optionstr: 'optionsTr',
+};
+function normalizeRow(r) {
+  if (!r || typeof r !== 'object') return r;
+  const n = { ...r };
+  for (const [oldKey, newKey] of Object.entries(ROW_KEY_MAP)) {
+    if (oldKey in n) {
+      n[newKey] = n[oldKey];
+      if (oldKey !== newKey) delete n[oldKey];
+    }
+  }
+  return n;
 }
 
 async function startServer() {
@@ -323,9 +353,10 @@ async function startServer() {
           userId: userId,
           toEmail: email,
           subject: 'Welcome to the Knowledge Garden!',
-          bodyEn: 'Welcome gardener! Your node is now initialized. This is your secure sandbox inbox where you will receive OTP codes, reports, and system alerts. You can also compose messages to the Academic Registry here.',
-          bodyAr: 'مرحباً بك يا مزارع المعرفة! تم تفعيل حسابك بنجاح. هذا هو صندوق الوارد الآمن الخاص بك حيث ستتلقى أكواد التحقق، التقارير، وتنبيهات النظام. يمكنك أيضاً إرسال استفساراتك إلى السجل الأكاديمي من هنا.',
-          bodyTr: 'Hoş geldin bahçıvan! Düğümünüz başarıyla başlatıldı. Bu, OTP kodlarını, raporları ve sistem uyarılarını alacağınız güvenli sandbox gelen kutunuzdur. Ayrıca buradan Akademik Kayıt birimine mesaj gönderebilirsiniz.',
+          bodyEn: `Welcome gardener! Your node is now initialized.\n\nYour 6-digit verification code (OTP) is: ${otpCode}\n\nUse this code to verify your account and access your gardens.`,
+          bodyAr: `مرحباً بك يا مزارع المعرفة! تم تفعيل حسابك بنجاح.\n\nرمز التحقق الخاص بك (OTP) هو: ${otpCode}\n\nاستخدم هذا الرمز للتحقق من حسابك والوصول إلى حدائقك.`,
+          bodyTr: `Hoş geldin bahçıvan! Düğümünüz başarıyla başlatıldı.\n\n6 haneli doğrulama kodunuz (OTP): ${otpCode}\n\nBu kodu hesabınızı doğrulamak ve bahçelerinize erişmek için kullanın.`,
+          otpCode: otpCode,
           isRead: false,
           timestamp: new Date().toISOString(),
           isGrowthReport: false,
@@ -661,10 +692,10 @@ async function startServer() {
     try {
       const [rows] = await pool.query('SELECT * FROM gardens');
       rows.forEach(r => {
-        if (!map.has(r.id)) map.set(r.id, r);
+        if (!map.has(r.id)) map.set(r.id, normalizeRow(r));
       });
     } catch {}
-    return res.json([...map.values()]);
+    return res.json([...map.values()].map(normalizeRow));
   });
 
   // List Seeds in a Garden
@@ -672,13 +703,14 @@ async function startServer() {
     const { id } = req.params;
     const db = readDB();
     const map = new Map();
-    db.seeds.filter(s => s.gardenId === id).forEach(s => map.set(s.id, s));
+    db.seeds.filter(s => s.gardenId === id).forEach(s => map.set(s.id, normalizeRow(s)));
     try {
       const [rows] = await pool.query(
         'SELECT s.*, STRING_AGG(st.tag, \',\') AS tags FROM seeds s LEFT JOIN seed_tags st ON st.seedId = s.id WHERE s.gardenId = ? GROUP BY s.id ORDER BY s.sortOrder, s.id',
         [id]
       );
       rows.forEach(r => {
+        r = normalizeRow(r);
         if (!map.has(r.id)) {
           if (r.tags) r.tags = r.tags.split(',');
           else r.tags = [];
@@ -693,12 +725,13 @@ async function startServer() {
   app.get('/api/seeds', async (req, res) => {
     const db = readDB();
     const map = new Map();
-    (db.seeds || []).forEach(s => map.set(s.id, s));
+    (db.seeds || []).forEach(s => map.set(s.id, normalizeRow(s)));
     try {
       const [rows] = await pool.query(
         'SELECT s.*, STRING_AGG(st.tag, \',\') AS tags FROM seeds s LEFT JOIN seed_tags st ON st.seedId = s.id GROUP BY s.id ORDER BY s.sortOrder, s.id'
       );
       rows.forEach(r => {
+        r = normalizeRow(r);
         if (!map.has(r.id)) {
           if (r.tags) r.tags = r.tags.split(',');
           else r.tags = [];
