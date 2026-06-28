@@ -9,13 +9,21 @@ import nodemailer from 'nodemailer';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dns from 'dns';
-dns.setDefaultResultOrder('ipv4first');
+
+async function smtpConnectOpts() {
+  const rawHost = process.env.SMTP_HOST;
+  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
+  if (!rawHost) return { host: rawHost, port };
+  const addrs = await dns.resolve4(rawHost);
+  const ipv4 = addrs && addrs.length > 0 ? addrs[0] : rawHost;
+  console.log(`[SMTP] Resolved ${rawHost} -> ${ipv4}`);
+  return { host: ipv4, hostname: rawHost, port };
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 export async function sendOTPEmail(to, otp, subject, bodyText) {
-  const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
@@ -23,14 +31,16 @@ export async function sendOTPEmail(to, otp, subject, bodyText) {
 
   console.log(`[SMTP] Attempting to send OTP email to: ${to}`);
 
-  if (!host || !user || !pass) {
+  if (!process.env.SMTP_HOST || !user || !pass) {
     console.warn('[SMTP] Missing SMTP credentials in environment variables. Falling back to Mock Box.');
     return { success: false, reason: 'credentials_missing', message: 'SMTP environment variables (HOST, USER, PASS) are not defined in your .env file.' };
   }
 
   try {
+    const { host, hostname } = await smtpConnectOpts();
     const transporter = nodemailer.createTransport({
       host,
+      hostname,
       port,
       secure: port === 465,
       auth: { user, pass },
@@ -80,18 +90,18 @@ export async function sendOTPEmail(to, otp, subject, bodyText) {
 }
 
 async function sendEmail(to, subject, textHtml, textPlain) {
-  const host = process.env.SMTP_HOST;
   const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   const from = process.env.SMTP_FROM || 'Knowledge Garden <no-reply@example.com>';
-  if (!host || !user || !pass) {
+  if (!process.env.SMTP_HOST || !user || !pass) {
     console.warn('[SMTP] Missing credentials, skipping real email. Payment notification saved to mock inbox.');
     return { success: false, reason: 'credentials_missing' };
   }
   try {
+    const { host, hostname } = await smtpConnectOpts();
     const t = nodemailer.createTransport({
-      host, port, secure: port === 465,
+      host, hostname, port, secure: port === 465,
       auth: { user, pass },
       tls: { rejectUnauthorized: false },
       connectionTimeout: 8000,

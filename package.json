@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "powershell -NoProfile -Command \"try { netstat -ano | Select-String ':3001 ' | ForEach-Object { $found = ($_ -split '\\\\s+')[-1]; if ($found -ne '0') { Stop-Process -Id $found -Force -ErrorAction SilentlyContinue } } } catch {}\" & node backend/server.js",
     "build": "npm run build -w frontend",
-    "start": "NODE_ENV=production node --expose-gc backend/server.js",
+    "start": "NODE_ENV=production NODE_OPTIONS=\"--dns-result-order=ipv4first\" node --expose-gc backend/server.js",
     "clean": "rm -rf dist frontend/node_modules backend/node_modules",
     "lint": "echo 'No linter configured'"
   },
